@@ -3,6 +3,7 @@ uvicorn[standard]>=0.23.2
 pyserial>=3.5
 websockets>=11.0.3
 python-multipart>=0.0.6
+zeroconf>=0.132.0
 
 # Testing dependencies
 pytest>=7.4.2

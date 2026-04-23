@@ -12,6 +12,7 @@ configure_logging()
 from .services.serial_manager import SerialManager
 from .services.telemetry import TelemetryManager
 from .services.gcode_streamer import GCodeStreamer
+from .services.mdns_advertiser import MdnsAdvertiser
 
 logger = logging.getLogger("hardware_comm.api")
 
@@ -40,10 +41,17 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
     loop.create_task(telemetry_mgr.start_polling(hz=10))
 
+    # Advertise this service on the LAN via mDNS so the Discovery Sidecar
+    # can find it automatically.  Runs in a thread (zeroconf is synchronous).
+    # Silently no-ops on Docker Desktop where multicast doesn't cross the NAT.
+    mdns = MdnsAdvertiser()
+    await asyncio.to_thread(mdns.start)
+
     yield
 
     # Shutdown
     logger.info("Shutting down Hardware Communication API…")
+    await asyncio.to_thread(mdns.stop)
     telemetry_mgr.stop()
     streamer_mgr.cancel_stream()
     serial_mgr.close()
