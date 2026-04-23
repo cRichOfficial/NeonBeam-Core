@@ -1,0 +1,130 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  NeonBeam Core — Standalone Docker Compose                                 ║
+# ║                                                                              ║
+# ║  Runs only the hardware_comm service.  Use this file when NeonBeam Core    ║
+# ║  is deployed on its own host (typically a Raspberry Pi 4) independently    ║
+# ║  of the NeonBeam OS frontend.                                               ║
+# ║                                                                              ║
+# ║  Usage                                                                       ║
+# ║  ─────────────────────────────────────────────────────────────────────────  ║
+# ║    # Development (Telnet simulator, hot-reload, verbose logging):            ║
+# ║    docker compose up --build                                                 ║
+# ║                                                                              ║
+# ║    # Production (physical serial port, detached):                            ║
+# ║    docker compose -f docker-compose.yml up -d --build                        ║
+# ║    # then edit the 'devices' and COMM_SERIAL_PORT sections below.            ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+services:
+  neonbeam-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # ── Port exposure ─────────────────────────────────────────────────────────
+    # REST API + WebSocket endpoint consumed by NeonBeam OS.
+    # Change the left-hand port if 8000 conflicts with another service.
+    ports:
+      - "8000:8000"
+
+    # ── Environment variables ─────────────────────────────────────────────────
+    # Copy .env.example → .env and adjust values before first run.
+    # Values in the 'environment' block below OVERRIDE anything in .env.
+    # Remove any line from 'environment' to let the .env file value take effect.
+    env_file:
+      - .env # created from .env.example — not committed to git
+
+    environment:
+
+      # ── Serial / Telnet connection ──────────────────────────────────────────
+      #
+      # Physical serial port (Raspberry Pi wired to MCU):
+      #   COMM_SERIAL_PORT: /dev/ttyACM0      ← USB CDC (grblHAL native USB)
+      #   COMM_SERIAL_PORT: /dev/ttyUSB0      ← USB-serial adapter (CH340/FT232)
+      #   COMM_SERIAL_PORT: /dev/ttyAMA0      ← Pi UART (GPIO 14/15)
+      #
+      # Telnet socket to grblHAL Simulator (development, no hardware):
+      #   COMM_SERIAL_PORT: socket://host.docker.internal:23
+      #
+      # Telnet socket to a network-enabled grblHAL board (e.g. ESP32 WiFi):
+      #   COMM_SERIAL_PORT: socket://192.168.1.20:23
+      #
+      # Uncomment one of the following lines (or set it in .env instead):
+      # COMM_SERIAL_PORT: socket://host.docker.internal:23   # default: simulator
+      COMM_SERIAL_PORT: /dev/ttyACM0 # uncomment for Pi + USB
+
+      COMM_BAUD_RATE: 115200 # ignored for socket:// connections
+
+      # ── Logging ────────────────────────────────────────────────────────────
+      #
+      # COMM_LOG_LEVEL controls verbosity for all hardware_comm.* loggers:
+      #   DEBUG     → Everything, including raw serial bytes (high volume)
+      #   INFO      → Normal operation: job lifecycle, connections, settings
+      #   WARNING   → Only recoverable issues: serial drops, buffer retries
+      #   ERROR     → Only unhandled failures that halt a subsystem
+      #   CRITICAL  → Silent except for process-level crashes
+      COMM_LOG_LEVEL: INFO
+
+      # COMM_LOG_OUTPUT — where log records are written:
+      #   stdout  → Docker log driver only  (docker compose logs -f)
+      #   file    → Rotating file only      (see COMM_LOG_FILE below)
+      #   both    → stdout AND rotating file (recommended for production)
+      COMM_LOG_OUTPUT: both
+
+      # Full path to the log file INSIDE the container.
+      # The volume mount below maps this to ./logs/ on the host.
+      COMM_LOG_FILE: /app/logs/neonbeam_core.log
+
+      # Rotate when the log exceeds this size (bytes). Default: 10 MB
+      COMM_LOG_MAX_BYTES: 10485760
+
+      # Number of rotated backup files to keep. Default: 5
+      COMM_LOG_BACKUP_COUNT: 5
+
+      # Raw serial byte logging — only active when COMM_LOG_LEVEL=DEBUG.
+      # Produces very high volume during GCode streaming.
+      # Set to true only for short debugging sessions.
+      COMM_LOG_VERBOSE_SERIAL: "false"
+
+    # ── Log volume ────────────────────────────────────────────────────────────
+    # Persists log files from inside the container to ./logs/ on the host.
+    # The directory is created automatically by Docker if it does not exist.
+    #
+    # On the host:  ./logs/neonbeam_core.log   (+ rotated backups)
+    # In container: /app/logs/neonbeam_core.log
+    volumes:
+      - ./logs:/app/logs
+
+    # ── Serial device pass-through ────────────────────────────────────────────
+    # Uncomment the 'devices' block when using a physical serial port on Linux
+    # (Raspberry Pi or any Linux host).  Format: HOST_DEVICE:CONTAINER_DEVICE
+    #
+    # Common mappings:
+    #   /dev/ttyACM0:/dev/ttyACM0   — USB CDC (most grblHAL USB boards)
+    #   /dev/ttyUSB0:/dev/ttyUSB0   — CH340 / FT232 USB-serial adapters
+    #   /dev/ttyAMA0:/dev/ttyAMA0   — Raspberry Pi UART (GPIO 14/15)
+    #
+    # The device path inside the container must match COMM_SERIAL_PORT above.
+    # Run `dmesg | tail -20` after plugging in the MCU to find the device name.
+    #
+    # devices:
+    #   - /dev/ttyACM0:/dev/ttyACM0
+
+    # ── Telnet / host bridge (development only) ───────────────────────────────
+    # Allows socket://host.docker.internal:23 to resolve from inside the container
+    # to the host machine's IP address.  Required when connecting to a simulator
+    # or an ESP32 board on the host's LAN.
+    #
+    # This entry is safe to leave in on production Pi deployments — it has no
+    # effect when 'devices' is used and COMM_SERIAL_PORT is a /dev/tty* path.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # ── Restart policy ────────────────────────────────────────────────────────
+    # 'unless-stopped' — restarts automatically after a crash or reboot,
+    # but stays stopped if you explicitly run `docker compose stop`.
+    restart: unless-stopped
+    # ── CORS ─────────────────────────────────────────────────────────────────
+    # NeonBeam Core's FastAPI has CORS configured to allow all origins (*) by
+    # default, making it accessible from any NeonBeam OS host on the LAN.
+    # Tighten this in app/main.py for high-security environments.
