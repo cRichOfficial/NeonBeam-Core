@@ -65,6 +65,10 @@ services:
       #   CRITICAL  → Silent except for process-level crashes
       COMM_LOG_LEVEL: INFO
 
+      # If true, any active GCode stream will be cancelled immediately if the last
+      # WebSocket client disconnects. Defaults to false (safer for long jobs).
+      COMM_CANCEL_STREAM_ON_DISCONNECT: "false"
+
       # COMM_LOG_OUTPUT — where log records are written:
       #   stdout  → Docker log driver only  (docker compose logs -f)
       #   file    → Rotating file only      (see COMM_LOG_FILE below)

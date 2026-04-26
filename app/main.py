@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,17 @@ logger = logging.getLogger("hardware_comm.api")
 serial_mgr = SerialManager()
 telemetry_mgr = TelemetryManager(serial_mgr)
 streamer_mgr = GCodeStreamer(serial_mgr)
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+
+def _truthy(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+# If true, any active GCode stream will be cancelled the moment the last
+# WebSocket client disconnects. Defaults to false (stream continues).
+CANCEL_ON_DISCONNECT = _truthy(os.getenv("COMM_CANCEL_STREAM_ON_DISCONNECT", "false"))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -348,3 +360,12 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         if websocket in telemetry_mgr.listeners:
             telemetry_mgr.listeners.remove(websocket)
+            
+        # Optional: cancel stream if no listeners remain and the feature is enabled
+        if CANCEL_ON_DISCONNECT and not telemetry_mgr.listeners:
+            if streamer_mgr.is_streaming:
+                logger.warning("Last client disconnected and COMM_CANCEL_STREAM_ON_DISCONNECT is enabled. Halting job.")
+                streamer_mgr.cancel_stream()
+                if serial_mgr.is_connected:
+                    # Async task because we're in a sync-like except block (but this is an async def)
+                    asyncio.create_task(serial_mgr.write_realtime("\x18"))
