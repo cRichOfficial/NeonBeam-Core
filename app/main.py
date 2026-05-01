@@ -296,6 +296,8 @@ async def start_gcode_stream():
     Begin streaming the currently queued GCode job.
     Called when the operator presses Cycle Start.
     """
+    logger.debug(f"[DEBUG] /api/gcode/start hit: serial_connected={serial_mgr.is_connected}, is_queued={streamer_mgr.is_queued}, file_queue_len={len(streamer_mgr.file_queue)}")
+    
     if not serial_mgr.is_connected:
         return {"status": "error", "message": "Machine not connected"}
     if not (streamer_mgr.is_queued or streamer_mgr.file_queue):
@@ -306,6 +308,7 @@ async def start_gcode_stream():
         await streamer_mgr.start_stream()
         return {"status": "streaming_started", "job_name": streamer_mgr.job_name}
     except Exception as e:
+        logger.error(f"[DEBUG] /api/gcode/start exception: {str(e)}")
         return {"status": "error", "message": str(e)}
 
 

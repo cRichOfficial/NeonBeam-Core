@@ -100,6 +100,8 @@ class GCodeStreamer:
         Begin streaming the currently queued job.
         Raises if nothing is queued or a job is already running.
         """
+        logger.debug(f"[DEBUG] start_stream called: is_streaming={self.is_streaming}, is_queued={self.is_queued}, len(file_queue)={len(self.file_queue)}, is_connected={self.serial.is_connected}")
+        
         if self.is_streaming:
             raise RuntimeError("A job is already streaming.")
         if not self.is_queued or not self.file_queue:
