@@ -125,36 +125,44 @@ class GCodeStreamer:
         safety_margin = max(10, int(self.rx_buffer_max * 0.05))
         logger.info(f"Buffer fill loop started. rx_buffer_max={self.rx_buffer_max}, margin={safety_margin}")
 
-        while self.is_streaming and self.file_queue:
-            if not self.serial.is_connected:
-                # Serial dropped mid-job — pause and wait for reconnect
-                logger.warning("Serial lost during stream. Pausing until reconnected…")
-                while not self.serial.is_connected and self.is_streaming:
-                    await asyncio.sleep(1.0)
-                if not self.is_streaming:
-                    break   # cancelled while waiting
-                logger.info("Serial reconnected. Resuming stream.")
+        try:
+            while self.is_streaming and self.file_queue:
+                if self.lines_sent == 0 and self.active_chars == 0:
+                    logger.debug(f"[DEBUG] First line: '{self.file_queue[0]}', rx_buffer_max={self.rx_buffer_max}, active_chars={self.active_chars}")
+                    
+                if not self.serial.is_connected:
+                    # Serial dropped mid-job — pause and wait for reconnect
+                    logger.warning("Serial lost during stream. Pausing until reconnected…")
+                    while not self.serial.is_connected and self.is_streaming:
+                        await asyncio.sleep(1.0)
+                    if not self.is_streaming:
+                        break   # cancelled while waiting
+                    logger.info("Serial reconnected. Resuming stream.")
 
-            next_line = self.file_queue[0].strip()
-            if not next_line:
-                self.file_queue.pop(0)
-                continue
+                next_line = self.file_queue[0].strip()
+                if not next_line:
+                    self.file_queue.pop(0)
+                    continue
 
-            line_len = len(next_line) + 1  # +1 for the \n written by serial_manager
+                line_len = len(next_line) + 1  # +1 for the \n written by serial_manager
 
-            if self.active_chars + line_len <= (self.rx_buffer_max - safety_margin):
-                await self.serial.write_line(next_line)
-                self.active_chars += line_len
-                self.sent_queue.append(line_len)
-                self.lines_sent  += 1
-                self.file_queue.pop(0)
-            else:
-                # Buffer full — yield and wait for 'ok' to drain it
-                await asyncio.sleep(0.01)
+                if self.active_chars + line_len <= (self.rx_buffer_max - safety_margin):
+                    logger.debug(f"[DEBUG] Sending line: '{next_line}'. active_chars before: {self.active_chars}")
+                    await self.serial.write_line(next_line)
+                    self.active_chars += line_len
+                    self.sent_queue.append(line_len)
+                    self.lines_sent  += 1
+                    self.file_queue.pop(0)
+                else:
+                    # Buffer full — yield and wait for 'ok' to drain it
+                    await asyncio.sleep(0.01)
 
-        if self.is_streaming:
+            if self.is_streaming:
+                self.is_streaming = False
+                logger.info(f"GCode stream completed. {self.lines_sent} lines sent.")
+        except Exception as e:
+            logger.error(f"[DEBUG] _stream_loop crashed: {str(e)}")
             self.is_streaming = False
-            logger.info(f"GCode stream completed. {self.lines_sent} lines sent.")
 
     # ── Cancel / reset ─────────────────────────────────────────────────────────
 
