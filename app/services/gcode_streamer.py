@@ -1,18 +1,20 @@
 import asyncio
 import logging
 from .serial_manager import SerialManager
+from .telemetry import TelemetryManager
 
 logger = logging.getLogger("hardware_comm.streamer")
 
 
 class GCodeStreamer:
-    def __init__(self, serial_manager: SerialManager):
+    def __init__(self, serial_manager: SerialManager, telemetry_manager: TelemetryManager):
         self.serial = serial_manager
+        self.telemetry = telemetry_manager
         self.rx_buffer_max = 1024   # Standard grblHAL fallback
 
         # Buffer accounting
         self.active_chars: int       = 0
-        self.sent_queue:   list[int] = []
+        self.sent_queue:   list[tuple[int, str]] = []
 
         # Job state
         self.file_queue:   list[str] = []
@@ -41,7 +43,13 @@ class GCodeStreamer:
         if line == "ok":
             await self.process_ok()
         elif line.startswith("error:"):
-            logger.error(f"Grbl Error Response: {line}")
+            # Identify which line caused the error if possible
+            failing_line = "unknown"
+            if self.sent_queue:
+                _, failing_line = self.sent_queue.pop(0)
+            
+            logger.error(f"Grbl Error Response: {line} (at line: '{failing_line}')")
+            
             # On error, stop streaming to avoid further buffer corruption
             if self.is_streaming:
                 logger.warning("Halting stream due to error response from MCU.")
@@ -57,7 +65,7 @@ class GCodeStreamer:
 
     async def process_ok(self):
         if self.sent_queue:
-            cleared_len = self.sent_queue.pop(0)
+            cleared_len, _ = self.sent_queue.pop(0)
             self.active_chars -= cleared_len
             if self.active_chars < 0:
                 self.active_chars = 0
@@ -109,6 +117,11 @@ class GCodeStreamer:
         if not self.serial.is_connected:
             raise RuntimeError("Machine not connected.")
 
+        # Check machine state — don't start if in Alarm or Offline
+        state = self.telemetry.last_state
+        if state in ("Alarm", "Offline"):
+            raise RuntimeError(f"Cannot start job: machine is in {state} state. Unlock or reconnect first.")
+
         self.is_queued   = False
         self.is_streaming = True
         self.active_chars = 0
@@ -150,7 +163,7 @@ class GCodeStreamer:
                     logger.debug(f"[DEBUG] Sending line: '{next_line}'. active_chars before: {self.active_chars}")
                     await self.serial.write_line(next_line)
                     self.active_chars += line_len
-                    self.sent_queue.append(line_len)
+                    self.sent_queue.append((line_len, next_line))
                     self.lines_sent  += 1
                     self.file_queue.pop(0)
                 else:

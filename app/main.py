@@ -20,7 +20,7 @@ logger = logging.getLogger("hardware_comm.api")
 # Global services references
 serial_mgr = SerialManager()
 telemetry_mgr = TelemetryManager(serial_mgr)
-streamer_mgr = GCodeStreamer(serial_mgr)
+streamer_mgr = GCodeStreamer(serial_mgr, telemetry_mgr)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -264,7 +264,7 @@ async def upload_gcode(file: UploadFile):
 
     try:
         content = await file.read()
-        gcode_str = content.decode("utf-8", errors="replace")
+        gcode_str = content.decode("utf-8-sig", errors="replace")
         lines = gcode_str.splitlines()
 
         # Strip blank lines and full-line comments, preserve inline code
